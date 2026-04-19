@@ -18,10 +18,19 @@ MODEL = "deepseek-chat"
 DB_PATH = "chat_history.db"
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO,format='%(asctime)s-%(name)s-%(levelname)s-%(message)s',
+                    handelders=[logging.FileHandler("app.log"),logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+@app.middleware("http")
+async def log_request(request,call_next):
+    start_time = time.time()
+    response=await call_next(request)
+    process_time=time.time()-start_time
+    logger.info(f"{request.method} {request.url.path}-{process_time:.3f}s")
+    return response
+
 request_count=0
 
 # ================ 数据库 ================
