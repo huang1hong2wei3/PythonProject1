@@ -4,6 +4,8 @@ import uuid
 import importlib
 import pkgutil
 from typing import Optional, List, Dict, Any
+import logging
+import time
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -15,7 +17,12 @@ API_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
 DB_PATH = "chat_history.db"
 
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
+request_count=0
 
 # ================ 数据库 ================
 def init_db():
@@ -80,11 +87,32 @@ class ChatResponse(BaseModel):
 
 # ================ API 接口 ================
 @app.get("/")
+
+@app.get("/metrics")
+async def metrics():
+    return {"requests_total": request_count}
+
+@app.get("/ping")
+async def ping():
+    global request_count
+    request_count += 1
+    logger.info(f"Received request to/ping,total count:{request_count}")
+    return {"message": "pong"}
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+@app.get("/metrics")
+async def metrics():
+    return {"requests_total": 1}
 async def root():
     return {"message": "AI 服务已启动，请使用 POST 请求访问 /chat"}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    start_time = time.time()
+    logger.info(f"Request start - session_id={request.session_id}, message={request.message[:50]}")
     session_id = request.session_id or str(uuid.uuid4())
     save_message(session_id, "user", request.message)
 
@@ -121,7 +149,9 @@ async def chat(request: ChatRequest):
                     executor = exec_func
                     break
             if executor:
+                logger.info(f"Calling skill: {func_name} with args: {arguments}")
                 tool_result = executor(**arguments)
+                logger.info(f"Skill result: {tool_result[:100]}")
                 messages.append(message)  # assistant 的 tool_calls 消息
                 messages.append({
                     "role": "tool",
@@ -143,6 +173,8 @@ async def chat(request: ChatRequest):
             reply = message["content"]
 
         save_message(session_id, "assistant", reply)
+        elapsed = time.time() - start_time
+        logger.info(f"Request end - session_id={session_id}, elapsed={elapsed:.2f}s")
         return ChatResponse(reply=reply, session_id=session_id)
 
     except Exception as e:
